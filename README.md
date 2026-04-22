@@ -23,7 +23,7 @@
 
 **Test Set Results:**
 
-Question2: mIOU: 0.6283 and mDICE: 0.6864
+Question2: mIOU: 0.6282 and mDICE: 0.6902
 
 ---
 
