@@ -5,7 +5,7 @@
 
 ---
 
-## Question 1: NLP Translation Task (5 Marks)
+## Question 1: NLP Translation Task 
 
 **Model:** Helsinki-NLP/opus-mt-bn-en
 
@@ -15,7 +15,7 @@
 
 ---
 
-## Question 2: CityScape Image Segmentation (10 Marks)
+## Question 2: CityScape Image Segmentation 
 
 **Model:** UNet (23 segmentation classes)  
 **Training:** 25 epochs, Adam optimizer (lr=1e-3), CrossEntropyLoss  
@@ -27,7 +27,7 @@ Question2: mIOU: 0.6283 and mDICE: 0.6864
 
 ---
 
-## Question 4: ECAPA-TDNN Model Optimization and Quantization (10 Marks)
+## Question 4: ECAPA-TDNN Model Optimization and Quantization 
 
 **Model:** ECAPA-TDNN (speechbrain/spkrec-ecapa-voxceleb)  
 **Dataset:** s3prl/superb (SI split; Val for finetuning, Eval for test)
