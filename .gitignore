@@ -220,4 +220,4 @@ __marimo__/
 *.pt
 *.pth
 q2/
-
+pretrained_model/
