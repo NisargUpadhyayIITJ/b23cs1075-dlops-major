@@ -1,0 +1,8 @@
+{
+  "ptq_accuracy": 0.5745000243186951,
+  "baseline_accuracy": 0.9697006423463822,
+  "accuracy_diff": -0.39520061802768713,
+  "ptq_gflops": 2.354636544,
+  "baseline_gflops": 9.418546176,
+  "gflops_reduction": 7.063909632
+}

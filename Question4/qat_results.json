@@ -1,0 +1,61 @@
+{
+  "best_trial": 2,
+  "best_params": {
+    "learning_rate": 2.276631200336182e-06,
+    "weight_decay": 0.0033677595456461074,
+    "num_epochs": 2
+  },
+  "best_accuracy": 0.6646666526794434,
+  "baseline_accuracy": 0.9697006423463822,
+  "accuracy_diff": -0.30503398966693884,
+  "qat_gflops": 2.354636544,
+  "baseline_gflops": 9.418546176,
+  "gflops_saved": 7.063909632,
+  "all_trials": [
+    {
+      "number": 0,
+      "params": {
+        "learning_rate": 1.613978910918599e-05,
+        "weight_decay": 0.0018829003241894993,
+        "num_epochs": 2
+      },
+      "value": 0.6633333563804626
+    },
+    {
+      "number": 1,
+      "params": {
+        "learning_rate": 2.1802079573225927e-05,
+        "weight_decay": 5.573684523473822e-05,
+        "num_epochs": 3
+      },
+      "value": 0.6633333563804626
+    },
+    {
+      "number": 2,
+      "params": {
+        "learning_rate": 2.276631200336182e-06,
+        "weight_decay": 0.0033677595456461074,
+        "num_epochs": 2
+      },
+      "value": 0.6646666526794434
+    },
+    {
+      "number": 3,
+      "params": {
+        "learning_rate": 0.00010094959189535098,
+        "weight_decay": 0.00016350079777378276,
+        "num_epochs": 4
+      },
+      "value": 0.5886666774749756
+    },
+    {
+      "number": 4,
+      "params": {
+        "learning_rate": 6.974503828551505e-05,
+        "weight_decay": 0.0004642723673378875,
+        "num_epochs": 4
+      },
+      "value": 0.628000020980835
+    }
+  ]
+}

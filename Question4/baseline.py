@@ -1,12 +1,11 @@
 """
 baseline.py - Task 1: Baseline Inference and Basic Profiling for ECAPA-TDNN
 - Load pre-trained ECAPA-TDNN from SpeechBrain
-- Evaluate on SUPERB SI eval split
+- Evaluate on SUPERB SI dataset using embedding-based classification
 - Compute Top-1 Accuracy and GFLOPs
 """
 
 import os
-import sys
 import json
 import torch
 import torchaudio
@@ -15,35 +14,12 @@ from torch.utils.data import DataLoader, Dataset
 from datasets import load_dataset
 from speechbrain.pretrained import EncoderClassifier
 
-# Suppress warnings
 import warnings
 warnings.filterwarnings("ignore")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RESULTS_FILE = os.path.join(SCRIPT_DIR, "baseline_results.json")
 MODEL_DIR = os.path.join(SCRIPT_DIR, "pretrained_model")
-
-
-def count_parameters(model):
-    """Count total parameters in the model."""
-    total = sum(p.numel() for p in model.parameters())
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return total, trainable
-
-
-def compute_gflops(model, input_tensor):
-    """Compute GFLOPs using thop."""
-    try:
-        from thop import profile
-        flops, params = profile(model, inputs=(input_tensor,), verbose=False)
-        gflops = flops / 1e9
-        return gflops
-    except Exception as e:
-        print(f"thop profiling failed: {e}")
-        # Fallback: manual estimation
-        from fvcore.nn import FlopCountAnalysis
-        flops = FlopCountAnalysis(model, input_tensor)
-        return flops.total() / 1e9
 
 
 class SuperbSIDataset(Dataset):
@@ -62,12 +38,10 @@ class SuperbSIDataset(Dataset):
         waveform = torch.tensor(audio["array"], dtype=torch.float32)
         sr = audio["sampling_rate"]
 
-        # Resample if needed
         if sr != self.target_sr:
             resampler = torchaudio.transforms.Resample(sr, self.target_sr)
             waveform = resampler(waveform)
 
-        # Truncate or pad
         if waveform.shape[0] > self.max_len:
             waveform = waveform[:self.max_len]
         elif waveform.shape[0] < self.max_len:
@@ -77,8 +51,60 @@ class SuperbSIDataset(Dataset):
         return waveform, label
 
 
+def extract_embeddings(classifier, dataloader, device):
+    """Extract speaker embeddings for all samples."""
+    all_embeddings = []
+    all_labels = []
+    classifier.mods.eval()
+    with torch.no_grad():
+        for i, (waveform, label) in enumerate(dataloader):
+            waveform = waveform.to(device)
+            # Extract embedding using SpeechBrain's encode_batch
+            embedding = classifier.encode_batch(waveform)
+            # embedding shape: (batch, 1, embed_dim) -> squeeze
+            embedding = embedding.squeeze(1).cpu()
+            all_embeddings.append(embedding)
+            all_labels.append(label)
+
+            if (i + 1) % 500 == 0:
+                print(f"  Extracted {i+1}/{len(dataloader)} embeddings")
+
+    all_embeddings = torch.cat(all_embeddings, dim=0)
+    all_labels = torch.cat(all_labels, dim=0)
+    return all_embeddings, all_labels
+
+
+def compute_centroids(embeddings, labels):
+    """Compute per-class centroid embeddings."""
+    unique_labels = torch.unique(labels)
+    centroids = {}
+    for lbl in unique_labels:
+        mask = labels == lbl
+        class_embeds = embeddings[mask]
+        centroids[lbl.item()] = class_embeds.mean(dim=0)
+    return centroids
+
+
+def classify_nearest_centroid(embeddings, centroids):
+    """Classify using cosine similarity to nearest centroid."""
+    # Stack centroids
+    centroid_labels = list(centroids.keys())
+    centroid_matrix = torch.stack([centroids[l] for l in centroid_labels])  # (num_classes, embed_dim)
+
+    # Normalize
+    embeddings_norm = torch.nn.functional.normalize(embeddings, dim=1)
+    centroid_norm = torch.nn.functional.normalize(centroid_matrix, dim=1)
+
+    # Cosine similarity
+    similarity = torch.mm(embeddings_norm, centroid_norm.t())  # (num_samples, num_classes)
+    pred_indices = torch.argmax(similarity, dim=1)
+    predictions = torch.tensor([centroid_labels[idx] for idx in pred_indices])
+    return predictions
+
+
 def main():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_str = "cuda:0" if torch.cuda.is_available() else "cpu"
+    device = torch.device(device_str)
     print(f"Using device: {device}")
 
     # Load pre-trained ECAPA-TDNN
@@ -86,91 +112,78 @@ def main():
     classifier = EncoderClassifier.from_hparams(
         source="speechbrain/spkrec-ecapa-voxceleb",
         savedir=MODEL_DIR,
-        run_opts={"device": str(device)}
+        run_opts={"device": device_str}
     )
 
     # Count parameters
-    # The main model is the embedding model (encoder)
     total_params, trainable_params = 0, 0
-    for module_name in ['mods', 'modules']:
-        if hasattr(classifier, module_name):
-            mod = getattr(classifier, module_name)
+    seen = set()
+    for key, mod in classifier.mods.items():
+        if isinstance(mod, torch.nn.Module):
             for name, param in mod.named_parameters():
-                total_params += param.numel()
-                if param.requires_grad:
-                    trainable_params += param.numel()
+                if id(param) not in seen:
+                    seen.add(id(param))
+                    total_params += param.numel()
+                    if param.requires_grad:
+                        trainable_params += param.numel()
 
     print(f"Total parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
 
-    # Load SUPERB SI dataset
-    print("\nLoading SUPERB SI dataset (eval split)...")
-    dataset = load_dataset("s3prl/superb", "si", split="test", trust_remote_code=True)
-
-    print(f"Eval set size: {len(dataset)}")
-
-    # Get number of unique speakers
-    labels = dataset["label"]
-    num_speakers = len(set(labels))
-    print(f"Number of speakers: {num_speakers}")
-
-    # Create dataset and dataloader
-    eval_dataset = SuperbSIDataset(dataset, target_sr=16000)
-    eval_loader = DataLoader(eval_dataset, batch_size=1, shuffle=False, num_workers=2)
-
-    # Compute GFLOPs with a sample input
+    # Compute GFLOPs
     print("\nComputing GFLOPs...")
-    sample_waveform = torch.randn(1, 80000).to(device)  # 5 seconds at 16kHz
+    sample_waveform = torch.randn(1, 80000).to(device)
     try:
-        from thop import profile, clever_format
-        # We need to profile the actual embedding model
-        model_to_profile = classifier.mods.embedding_model if hasattr(classifier.mods, 'embedding_model') else None
-
-        if model_to_profile is not None:
-            model_to_profile.eval()
-            # ECAPA-TDNN takes features, not raw audio. Need to get features first
-            with torch.no_grad():
-                feats = classifier.mods.compute_features(sample_waveform)
-                feats = classifier.mods.mean_var_norm(feats, torch.ones(1).to(device))
-            flops, params = profile(model_to_profile, inputs=(feats,), verbose=False)
-            gflops = flops / 1e9
-        else:
-            gflops = -1.0
-            print("Could not find embedding model for profiling")
+        from thop import profile
+        model_to_profile = classifier.mods.embedding_model
+        model_to_profile.eval()
+        with torch.no_grad():
+            feats = classifier.mods.compute_features(sample_waveform)
+            feats = classifier.mods.mean_var_norm(feats, torch.ones(1).to(device))
+        flops, _ = profile(model_to_profile, inputs=(feats,), verbose=False)
+        gflops = flops / 1e9
     except Exception as e:
         print(f"GFLOPs computation error: {e}")
         gflops = -1.0
 
     print(f"Computational cost: {gflops:.4f} GFLOPs")
 
-    # Evaluate accuracy
-    print("\nEvaluating on test set...")
-    correct = 0
-    total = 0
+    # Load datasets
+    print("\nLoading SUPERB SI dataset...")
+    val_dataset = load_dataset("s3prl/superb", "si", split="validation", trust_remote_code=True)
+    test_dataset = load_dataset("s3prl/superb", "si", split="test", trust_remote_code=True)
 
-    classifier.mods.eval()
-    with torch.no_grad():
-        for i, (waveform, label) in enumerate(eval_loader):
-            waveform = waveform.to(device)
+    num_speakers = len(set(test_dataset["label"]))
+    print(f"Val set size: {len(val_dataset)}, Test set size: {len(test_dataset)}")
+    print(f"Number of speakers: {num_speakers}")
 
-            # Get prediction
-            output = classifier.classify_batch(waveform)
-            # output is (posterior, score, index, text_lab)
-            pred_idx = output[3]  # predicted label index
+    val_ds = SuperbSIDataset(val_dataset, target_sr=16000)
+    test_ds = SuperbSIDataset(test_dataset, target_sr=16000)
 
-            # Compare
-            # The classifier returns string labels, we need to map
-            # Actually classify_batch returns: (out_prob, score, index, text_lab)
-            pred_index = output[2].squeeze().item()
+    val_loader = DataLoader(val_ds, batch_size=1, shuffle=False, num_workers=2)
+    test_loader = DataLoader(test_ds, batch_size=1, shuffle=False, num_workers=2)
 
-            if pred_index == label.item():
-                correct += 1
-            total += 1
+    # Extract embeddings for val set (to build centroids)
+    print("\nExtracting val set embeddings (for centroids)...")
+    val_embeddings, val_labels = extract_embeddings(classifier, val_loader, device)
+    print(f"Val embeddings shape: {val_embeddings.shape}")
 
-            if (i + 1) % 500 == 0:
-                print(f"  Processed {i+1}/{len(eval_loader)} | Running Acc: {correct/total:.4f}")
+    # Compute per-class centroids from val set
+    print("Computing class centroids...")
+    centroids = compute_centroids(val_embeddings, val_labels)
+    print(f"Number of centroid classes: {len(centroids)}")
 
+    # Extract test embeddings
+    print("\nExtracting test set embeddings...")
+    test_embeddings, test_labels = extract_embeddings(classifier, test_loader, device)
+    print(f"Test embeddings shape: {test_embeddings.shape}")
+
+    # Classify test set using nearest centroid
+    print("Classifying test set...")
+    predictions = classify_nearest_centroid(test_embeddings, centroids)
+    correct = (predictions == test_labels).sum().item()
+    total = len(test_labels)
     accuracy = correct / total
+
     print(f"\n{'='*60}")
     print(f"BASELINE RESULTS")
     print(f"{'='*60}")
@@ -184,9 +197,9 @@ def main():
         "accuracy": accuracy,
         "gflops": gflops,
         "total_params": total_params,
-        "trainable_params": trainable_params,
         "num_speakers": num_speakers,
-        "eval_size": len(dataset),
+        "val_size": len(val_dataset),
+        "test_size": len(test_dataset),
     }
     with open(RESULTS_FILE, "w") as f:
         json.dump(results, f, indent=2)

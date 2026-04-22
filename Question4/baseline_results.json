@@ -1,0 +1,8 @@
+{
+  "accuracy": 0.9697006423463822,
+  "gflops": 9.418546176,
+  "total_params": 22150912,
+  "num_speakers": 1251,
+  "val_size": 6904,
+  "test_size": 8251
+}
