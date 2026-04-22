@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies
 RUN pip install --no-cache-dir \
-    torch --index-url https://download.pytorch.org/whl/cpu \
+    torch \
     transformers \
     sentencepiece \
     sacrebleu
